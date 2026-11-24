@@ -219,7 +219,7 @@ What the checks found, all planted or arising from the generated documents:
   the cash roll-forward and cash flow arithmetic checks both failed on it. Of the seven Ashgrove failures, five trace to
   the planted defects and two to this misread.
 
-Test run (`python -m pytest -q`): `__TESTS__`. They cover extraction against the printed values (including OCR pages,
+Test run (`python -m pytest -q`): `41 passed` (about three minutes on a loaded host). They cover extraction against the printed values (including OCR pages,
 note columns and two-panel pages), reconciliation, ratios against hand calculations, the three DSCR definitions, the
 policy file, the unsourced-number guard (including a fake model that invents a number), the Q&A tools, planners and
 fallbacks, the eval numbers, the audit chains and the review server. The suite OCRs a dozen pages, so it takes a few

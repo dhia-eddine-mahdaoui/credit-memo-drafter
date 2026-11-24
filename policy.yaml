@@ -1,0 +1,76 @@
+# Illustrative SME term-loan credit policy (fictional thresholds, for demonstration only).
+# Each rule is evaluated on the latest fiscal year. severity: "exception" needs a documented
+# sign-off; "watch" is flagged for the credit officer. Edit and re-run to see the memo change.
+name: Illustrative SME term-loan policy
+rules:
+  - id: dscr_pro_forma
+    title: Pro forma debt service cover
+    metric: dscr_pro_forma
+    op: ">="
+    threshold: 1.25
+    unit: ratio
+    severity: exception
+    rationale: Cash available for debt service must cover existing plus new scheduled debt service.
+
+  - id: leverage_pro_forma
+    title: Pro forma leverage
+    metric: leverage_pro_forma
+    op: "<="
+    threshold: 3.5
+    unit: ratio
+    severity: exception
+    rationale: Total debt including the new facility relative to EBITDA.
+
+  - id: interest_cover
+    title: Interest cover
+    metric: interest_cover
+    op: ">="
+    threshold: 3.0
+    unit: ratio
+    severity: watch
+    rationale: Operating profit relative to interest expense.
+
+  - id: current_ratio
+    title: Liquidity (current ratio)
+    metric: current_ratio
+    op: ">="
+    threshold: 1.2
+    unit: ratio
+    severity: watch
+    rationale: Current assets relative to current liabilities.
+
+  - id: ebitda_margin
+    title: EBITDA margin
+    metric: ebitda_margin
+    op: ">="
+    threshold: 0.08
+    unit: pct
+    severity: watch
+    rationale: Minimum operating profitability before depreciation.
+
+  - id: revenue_growth
+    title: Revenue trend
+    metric: revenue_growth
+    op: ">="
+    threshold: -0.05
+    unit: pct
+    severity: watch
+    rationale: Year-on-year revenue decline beyond this level is flagged.
+
+  - id: collateral_cover
+    title: Collateral cover
+    metric: collateral_cover
+    op: ">="
+    threshold: 1.25
+    unit: ratio
+    severity: exception
+    rationale: Applicant-stated collateral value relative to the loan amount.
+
+  - id: reconciliation_failures
+    title: Source reconciliation
+    metric: recon_failures
+    op: "<="
+    threshold: 0
+    unit: count
+    severity: exception
+    rationale: Failed reconciliation checks must be resolved with the borrower before approval.

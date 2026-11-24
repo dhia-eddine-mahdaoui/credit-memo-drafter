@@ -18,6 +18,14 @@ def fmt_value(value, unit: str) -> str:
         return f"{value * 100:.1f}%"
     if unit == "rate":
         return f"{value:.2f}%"
+    if unit == "money_chg":
+        return f"{'-' if value < 0 else '+'}£{abs(value) / 1000:,.0f}k"
+    if unit == "ratio_chg":
+        return f"{value:+.2f}x"
+    if unit == "pctchg":
+        return f"{value * 100:+.1f}%"
+    if unit == "pts":
+        return f"{value * 100:+.1f} pts"
     if unit == "months":
         return f"{int(value)} months"
     if unit == "count":
@@ -46,7 +54,7 @@ class Ref:
         forms = {float(v), abs(float(v))}
         if self.unit == "money":
             forms |= {v / 1000, abs(v) / 1000, v / 1e6, abs(v) / 1e6}
-        if self.unit == "pct":
+        if self.unit in ("pct", "pctchg", "pts"):
             forms |= {v * 100, abs(v) * 100}
         return forms
 

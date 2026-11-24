@@ -52,6 +52,25 @@ def append(path: Path, memo: str, section: str, decision: str, reviewer: str, co
     return entry
 
 
+def append_event(path: Path, memo: str, kind: str, payload: dict) -> dict:
+    """Append a free-form event (for example an analyst question and its answer) to a hash-chained log."""
+    path = Path(path)
+    with _lock:
+        rows = read(path)
+        prev = rows[-1]["hash"] if rows else "0" * 64
+        entry = dict(ts=datetime.now(timezone.utc).isoformat(timespec="seconds"), memo=memo, kind=kind,
+                     payload=payload, prev=prev)
+        entry["hash"] = _digest(prev, entry)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, (json.dumps(entry, ensure_ascii=False) + "\n").encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    return entry
+
+
 def verify(path: Path) -> tuple[bool, str]:
     prev = "0" * 64
     for i, row in enumerate(read(path), 1):

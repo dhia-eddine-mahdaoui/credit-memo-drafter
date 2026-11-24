@@ -8,12 +8,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from . import audit
+from . import audit, qa
 
 
 def make_handler(root: Path):
     root = root.resolve()
     log = root / "audit.jsonl"
+    qa_log = root / "qa_log.jsonl"
+    chat = qa.http_chat_from_env()          # None unless an LLM is configured through the environment
+    workspaces: dict = {}
 
     def memos():
         return sorted(p.parent.name for p in root.glob("*/memo.md"))
@@ -39,12 +42,32 @@ def make_handler(root: Path):
                 return self._send(403, b"forbidden", "text/plain")
             if target.is_dir():
                 target = target / "memo.html"
-            if not target.is_file() or target.name == "audit.jsonl":
+            if not target.is_file() or target.name in ("audit.jsonl", "qa_log.jsonl"):
                 return self._send(404, b"not found", "text/plain")
             ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
             self._send(200, target.read_bytes(), ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
 
+        def _ask(self):
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                data = json.loads(self.rfile.read(min(n, 5_000)))
+                memo, question = data["memo"], str(data["question"]).strip()
+                if memo not in memos() or not question:
+                    raise ValueError("unknown memo or empty question")
+                if memo not in workspaces:
+                    workspaces[memo] = qa.Workspace.load(root / memo)
+                res = qa.answer(workspaces[memo], question, chat)
+            except (ValueError, KeyError, json.JSONDecodeError, FileNotFoundError) as exc:
+                return self._send(400, str(exc).encode(), "text/plain")
+            audit.append_event(qa_log, memo, "analyst_question", dict(
+                question=res["question"], answer=res["plain"], planner=res["planner"], notes=res["notes"],
+                tools=[dict(tool=t["tool"], args=t["args"]) for t in res["trace"]],
+                cited=sorted(res["refs"])))
+            self._send(200, json.dumps(res).encode())
+
         def do_POST(self):
+            if urlparse(self.path).path == "/api/ask":
+                return self._ask()
             if urlparse(self.path).path != "/api/review":
                 return self._send(404, b"not found", "text/plain")
             try:

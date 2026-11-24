@@ -4,7 +4,42 @@ from __future__ import annotations
 
 from .model import Fact
 from .reconcile import Dataset
-from .refs import RefStore
+from .refs import Ref, RefStore
+
+DSCR_BASES = ("ebitda_less_tax", "ebitda_less_tax_less_capex", "cfo_plus_interest")
+DEFAULT_DSCR = {"cfads": "ebitda_less_tax", "capex_share": 1.0}
+
+
+def dscr_settings(cfg):
+    """Validate the `dscr:` block of the policy file (missing keys fall back to the original definition)."""
+    out = {**DEFAULT_DSCR, **(cfg or {})}
+    if out["cfads"] not in DSCR_BASES:
+        raise ValueError(f"dscr.cfads must be one of {DSCR_BASES}, got {out['cfads']!r}")
+    if not 0 <= float(out["capex_share"]) <= 1:
+        raise ValueError("dscr.capex_share must be between 0 and 1")
+    return out
+
+
+def _cfads(calc, store, cfg, p, ebitda, g):
+    """Cash flow available for debt service under the policy's chosen definition."""
+    basis, lab = cfg["cfads"], "Cash available for debt service"
+    if basis == "ebitda_less_tax":
+        return calc("cfads", p, lab, "money", [ebitda, g["tax"]], lambda e, t: e - abs(t),
+                    "Cash available for debt service = EBITDA less tax = [[%s]] - abs([[%s]]) = [[self]]"
+                    % (ebitda, g["tax"]))
+    if basis == "ebitda_less_tax_less_capex":
+        sid = "policy.dscr_capex_share"
+        if sid not in store:
+            share = float(cfg["capex_share"])
+            store.add(Ref(sid, "policy", "Policy: share of capex deducted in DSCR", share, "pct",
+                          f"{share * 100:.1f}%", note="policy.yaml dscr.capex_share"))
+        return calc("cfads", p, lab, "money", [ebitda, g["tax"], g["capex"], sid],
+                    lambda e, t, c, sh: e - abs(t) - sh * abs(c),
+                    "Cash available for debt service = EBITDA less tax less a share of capex = "
+                    "[[%s]] - abs([[%s]]) - [[%s]] x abs([[%s]]) = [[self]]" % (ebitda, g["tax"], sid, g["capex"]))
+    return calc("cfads", p, lab, "money", [g["cfo"], g["interest"]], lambda c, i: c + abs(i),
+                "Cash available for debt service = operating cash flow before interest = "
+                "[[%s]] + abs([[%s]]) = [[self]]" % (g["cfo"], g["interest"]))
 
 
 def annuity_payment(amount: float, annual_rate_pct: float, months: int) -> float:
@@ -18,8 +53,9 @@ def _div(a, b):
     return None if not b else a / b
 
 
-def analyse(slug: str, ds: Dataset, app: list[Fact], store: RefStore) -> dict:
+def analyse(slug: str, ds: Dataset, app: list[Fact], store: RefStore, dscr_cfg=None) -> dict:
     """Populate store with fact and calc refs. Returns {"periods", "latest", "ids", "restated"}."""
+    cfg = dscr_settings(dscr_cfg)
     periods = sorted(ds.docs)
     latest = periods[-1]
     ids: dict[str, dict] = {}
@@ -53,7 +89,7 @@ def analyse(slug: str, ds: Dataset, app: list[Fact], store: RefStore) -> dict:
 
     for p in periods:
         g = {k: F(p, k) for k in ("revenue", "gross_profit", "ebit", "da", "interest", "tax", "net_income",
-                                   "cash", "tca", "tcl", "std", "ltd", "equity", "ta", "cfo", "repay")}
+                                   "cash", "tca", "tcl", "std", "ltd", "equity", "ta", "cfo", "repay", "capex")}
         for k, v in g.items():
             if v:
                 put(k, p, v)
@@ -75,10 +111,7 @@ def analyse(slug: str, ds: Dataset, app: list[Fact], store: RefStore) -> dict:
              lambda ebit, i: _div(ebit, abs(i)),
              "Interest cover = operating profit ÷ interest expense = [[%s]] ÷ abs([[%s]]) = [[self]]"
              % (g["ebit"], g["interest"]))
-        cfads = calc("cfads", p, "Cash available for debt service", "money", [ebitda, g["tax"]],
-                     lambda e, t: e - abs(t),
-                     "Cash available for debt service = EBITDA less tax = [[%s]] - abs([[%s]]) = [[self]]"
-                     % (ebitda, g["tax"]))
+        cfads = _cfads(calc, store, cfg, p, ebitda, g)
         dsv = calc("debt_service", p, "Existing debt service", "money", [g["interest"], g["repay"]],
                    lambda i, r: abs(i) + abs(r),
                    "Existing debt service = interest + principal repaid = abs([[%s]]) + abs([[%s]]) = [[self]]"

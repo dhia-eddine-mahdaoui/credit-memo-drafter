@@ -203,18 +203,81 @@ def detect_scale(text: str):
     return 1
 
 
+def _year_header(line):
+    """The year words of a header line such as '2023 2022' or 'Note 2023 2022', else None."""
+    yrs = [w for w in line if re.fullmatch(r"20\d\d", w.text)]
+    others = [w for w in line if w not in yrs]
+    if len(yrs) >= 2 and all(re.fullmatch(r"notes?", w.text, re.I) for w in others):
+        return yrs
+    return None
+
+
 def column_anchors(lines, fy: int) -> dict:
     """Right edges of the year headers (e.g. '2023 2022') keyed by year."""
     for line in lines:
-        yrs = [w for w in line if re.fullmatch(r"20\d\d", w.text)]
-        if len(yrs) >= 2 and len(yrs) == len(line):
+        yrs = _year_header(line)
+        if yrs:
             return {int(w.text): w.x1 for w in yrs}
     return {}
 
 
+def _channel_after(words: list[Word], end: float, min_gap: float = 0.015, tolerate: int = 2):
+    """x in the middle of the first vertical channel to the right of `end` that at most `tolerate` words cross
+    (a footer or title line may span it), or None if there is nothing to the right."""
+    if not any(w.x0 >= end for w in words):
+        return None
+    step, x, run = 0.0025, end, []
+    while x < 1.0:
+        crossing = sum(1 for w in words if w.x0 < x < w.x1)
+        if crossing <= tolerate:
+            run.append(x)
+            if run[-1] - run[0] >= min_gap:
+                return (run[0] + run[-1]) / 2
+        else:
+            run = []
+        x += step
+    return None
+
+
+def split_panels(words: list[Word]) -> list[list[Word]]:
+    """Pages can carry two statements side by side, or a statement next to prose notes. The year-header line
+    marks where each table's numbers end; the first vertical whitespace channel to the right of each group
+    of year headers is a panel boundary. Each panel is then parsed on its own (boxes stay page-normalised)."""
+    for line in group_lines(words):
+        yrs = [w for w in line if re.fullmatch(r"20\d\d", w.text)]     # the line may also hold prose from a neighbour
+        if len({w.text for w in yrs}) < 2:          # 'Year ended 31 December 2023' is not the column header
+            continue
+        yrs = sorted(yrs, key=lambda w: w.x0)
+        groups = [[yrs[0]]]
+        for w in yrs[1:]:
+            if w.x0 - groups[-1][-1].x1 > 0.1:
+                groups.append([w])
+            else:
+                groups[-1].append(w)
+        cuts = [c for c in (_channel_after(words, max(w.x1 for w in g)) for g in groups) if c is not None]
+        if not cuts:
+            return [words]
+        edges = [-1.0] + cuts + [2.0]
+        panels = [[w for w in words if lo <= (w.x0 + w.x1) / 2 < hi] for lo, hi in zip(edges, edges[1:])]
+        # a real panel carries text; stray digits right of a skewed scan's last column go back to their neighbour
+        merged: list[list[Word]] = []
+        for pnl in panels:
+            texty = sum(1 for w in pnl if re.search(r"[A-Za-z]{3}", w.text)) >= 6
+            if merged and not texty:
+                merged[-1] += pnl
+            elif pnl:
+                merged.append(pnl)
+        return merged
+    return [words]
+
+
 def nearest_period(anchors: dict, x1: float):
+    """Column whose year header the number is right-aligned with. The tolerance is a fraction of the spacing
+    between year columns, so a note-reference column sitting closer to the first year than that is not a value."""
+    xs = sorted(anchors.values())
+    tol = min(0.4 * min(b - a for a, b in zip(xs, xs[1:])), 0.06) if len(xs) > 1 else 0.06
     year, dist = min(((y, abs(x - x1)) for y, x in anchors.items()), key=lambda t: t[1])
-    return year if dist < 0.06 else None
+    return year if dist < tol else None
 
 
 def _union(ws: list[Word]):
@@ -236,6 +299,7 @@ def extract_statements(path: Path, borrower: str, rel: str) -> ExtractedDoc:
     raw_facts = []
     page_scales: dict[int, tuple] = {}
     with pymupdf.open(path) as pdf:
+        units = []                                   # (page, words of one panel, read method)
         for page in pdf:
             words = text_words(page)
             method = "text"
@@ -244,6 +308,9 @@ def extract_statements(path: Path, borrower: str, rel: str) -> ExtractedDoc:
                     result.warnings.append(f"page {page.number + 1}: no text layer and OCR not installed")
                     continue
                 words, method = ocr_words(page), "ocr"
+            for panel in split_panels(words):
+                units.append((page, panel, method))
+        for page, words, method in units:
             lines = group_lines(words)
             statement = detect_statement(lines)
             result.pages.append({"page": page.number + 1, "statement": statement, "method": method})
@@ -260,8 +327,15 @@ def extract_statements(path: Path, borrower: str, rel: str) -> ExtractedDoc:
                     page_scales[page.number + 1] = (s, line_text(line), line, method)
             anchors = column_anchors(lines[:14], fy)
             seen = set()
+            seen_labels = set()
             for line in lines:
                 label_ws, nums = split_line(line)
+                if label_ws and not nums and method == "ocr":
+                    k0, _ = match_label(statement, line_text(label_ws))
+                    if k0 and k0 not in seen_labels:
+                        seen_labels.add(k0)
+                        result.warnings.append(f"page {page.number + 1}: {k0} label read by OCR but no numbers "
+                                               f"(dash or blank cells are often lost in scans)")
                 if not label_ws or not nums:
                     continue
                 key, score = match_label(statement, line_text(label_ws))
@@ -270,6 +344,11 @@ def extract_statements(path: Path, borrower: str, rel: str) -> ExtractedDoc:
                 if key in seen:
                     result.warnings.append(f"page {page.number + 1}: duplicate line for {key}, kept first")
                     continue
+                if anchors:
+                    # numbers not right-aligned with a year column (note references) are not values
+                    nums = [w for w in nums if nearest_period(anchors, w.x1) is not None]
+                    if not nums:
+                        continue
                 if len(nums) > 2:
                     result.warnings.append(f"page {page.number + 1}: {key} has {len(nums)} numeric columns, skipped")
                     continue

@@ -7,3 +7,5 @@ cd "$(dirname "$0")"
 pip install -q -r requirements.txt
 python -m pytest -q
 python -m creditmemo run
+
+python -m creditmemo eval

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pymupdf
 from PIL import Image, ImageFilter
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.pdfgen import canvas
 
 SERIES_YEARS = (2020, 2021, 2022, 2023)
@@ -80,6 +80,52 @@ BORROWERS = {
             term=48, rate=9.00,
             collateral="Debenture over company assets and a director guarantee",
             collateral_value=450_000),
+    ),
+}
+
+# Harder variants (not part of the main three): a note-reference column, two statements side by side on
+# landscape pages next to a prose notes panel, and whole documents that are scans with heavier noise.
+HARD_BORROWERS = {
+    "wexcombe": dict(
+        name="Wexcombe Packaging Ltd",
+        style=1,
+        layout="twopanel",
+        opening=dict(cash=700, rec=1100, inv=900, ppe=3900, pay=800, debt=3000),
+        years={
+            2020: (7400, .655, 1500, 380, 150, .19, 450, 0, 300, 100, 52, 55, 44, 300),
+            2021: (7800, .650, 1560, 390, 142, .19, 480, 0, 300, 120, 52, 54, 44, 300),
+            2022: (8350, .648, 1620, 400, 135, .19, 500, 0, 300, 140, 51, 54, 44, 300),
+            2023: (8900, .646, 1680, 415, 128, .25, 520, 0, 300, 160, 51, 53, 44, 300),
+        },
+        units_docs=(), scan=(), defects=(),
+        application=dict(
+            business="Corrugated and protective packaging for regional manufacturers",
+            amount=1_200_000, purpose="Replacement of the main die-cutting line",
+            term=60, rate=7.75,
+            collateral="First charge over the financed equipment",
+            collateral_value=1_500_000),
+    ),
+    "harcombe": dict(
+        name="Harcombe Dairy Foods Ltd",
+        style=2,
+        layout="notes",
+        scan_all=True,
+        opening=dict(cash=800, rec=1400, inv=700, ppe=4600, pay=1200, debt=3600),
+        years={
+            2020: (11800, .700, 1900, 430, 230, .19, 400, 0, 350, 120, 40, 28, 38, 350),
+            2021: (12300, .702, 1950, 440, 220, .19, 420, 0, 350, 120, 40, 28, 38, 350),
+            2022: (12650, .706, 1990, 450, 208, .19, 430, 0, 350, 100, 41, 29, 38, 350),
+            2023: (12900, .710, 2030, 455, 196, .25, 450, 0, 350, 100, 41, 29, 38, 350),
+        },
+        units_docs=(), scan=(),
+        # FY2023 cash flow statement prints the working-capital movement 30 too high
+        defects=((2023, 2023, "cf_wc", +30),),
+        application=dict(
+            business="Chilled dairy products supplied to supermarkets",
+            amount=900_000, purpose="Chiller capacity and packing line upgrade",
+            term=60, rate=8.25,
+            collateral="Debenture over company assets",
+            collateral_value=1_100_000),
     ),
 }
 
@@ -207,76 +253,130 @@ def _fmt(v_thousands: int, units: bool) -> str:
     return f"({s})" if x < 0 else s
 
 
-def _draw_page(c, spec, doc_year, kind, cols, units, page_no):
-    W, H = A4
+NOTE_REFS = {"da": 7, "interest": 4, "tax": 5, "receivables": 9, "inventory": 10, "ppe": 8, "payables": 11,
+             "std": 12, "ltd": 12, "capex": 8, "draw": 12, "repay": 12, "cf_wc": 9}
+NOTES_TEXT = [
+    "Notes to the accounts (extract)",
+    "8   Tangible fixed assets are depreciated on a straight-line basis over 5 to 10 years.",
+    "9   Trade receivables are stated net of an allowance for doubtful debts.",
+    "12  Bank borrowings are secured by a fixed charge over the financed assets.",
+    "Figures in the notes are not part of the primary statements above.",
+]
+
+
+def _geometry(layout, panel):
+    """Label x, number right edges, note column x, total-line start for a panel."""
+    if layout == "twopanel":
+        ox = 30 if panel == 0 else 430
+        return dict(ox=ox, lx=ox + 30, xa=ox + 300, xb=ox + 370, xn=ox + 255, tline=ox + 215, step=16, head=(2, 13))
+    return dict(ox=0, lx=60, xa=430, xb=520, xn=370, tline=300, step=22, head=(6, 20))
+
+
+def _draw_panel(c, spec, doc_year, kind, cols, units, top, g, notes, first):
     style = spec["style"]
-    c.setFont("Helvetica-Bold", 14)
-    c.drawString(60, H - 60, spec["name"])
+    lx, xa, xb, xn = g["lx"], g["xa"], g["xb"], g["xn"]
+    if first:
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(lx, top, spec["name"])
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(60, H - 86, HEADINGS[style][kind])
+    c.drawString(lx, top - 26, HEADINGS[style][kind])
     c.setFont("Helvetica", 9)
-    c.drawString(60, H - 104, f"Year ended 31 December {doc_year}")
-    c.drawString(60, H - 117, UNIT_LINE_WHOLE if units else UNIT_LINES[style])
-    xa, xb = 430, 520
+    c.drawString(lx, top - 44, f"Year ended 31 December {doc_year}")
+    c.drawString(lx, top - 57, UNIT_LINE_WHOLE if units else UNIT_LINES[style])
     c.setFont("Helvetica-Bold", 10)
-    c.drawRightString(xa, H - 145, str(doc_year))
-    c.drawRightString(xb, H - 145, str(doc_year - 1))
-    y = H - 172
+    if notes:
+        c.drawRightString(xn, top - 85, "Note")
+    c.drawRightString(xa, top - 85, str(doc_year))
+    c.drawRightString(xb, top - 85, str(doc_year - 1))
+    y = top - 112
     for row in LAYOUT[kind]:
         if row[0] == "head":
-            y -= 6
+            y -= g["head"][0]
             c.setFont("Helvetica-Bold", 10)
-            c.drawString(60, y, row[1])
-            y -= 20
+            c.drawString(lx, y, row[1])
+            y -= g["head"][1]
             continue
         key = row[1]
         total = row[0] == "total"
         c.setFont("Helvetica-Bold" if total else "Helvetica", 10)
         if total:
             c.setLineWidth(0.5)
-            c.line(300, y + 13, xb + 2, y + 13)
-        c.drawString(72 if not total else 60, y, LABELS[style][key])
+            c.line(g["tline"], y + 13, xb + 2, y + 13)
+        c.drawString(lx + (12 if not total else 0), y, LABELS[style][key])
+        if notes and key in NOTE_REFS:
+            c.setFont("Helvetica", 10)
+            c.drawRightString(xn, y, str(NOTE_REFS[key]))
+            c.setFont("Helvetica-Bold" if total else "Helvetica", 10)
         c.drawRightString(xa, y, _fmt(cols[doc_year][key], units))
         c.drawRightString(xb, y, _fmt(cols[doc_year - 1][key], units))
-        y -= 22
+        y -= g["step"]
     c.setFont("Helvetica-Oblique", 8)
-    if kind == "income" and spec["defects"] and any(d[0] == doc_year and d[2] == "revenue"
-                                                     for d in spec["defects"]):
-        c.drawString(60, y - 14, "Comparative figures have been restated for the reclassification "
+    if kind == "income" and any(d[0] == doc_year and d[2] == "revenue" for d in spec["defects"]):
+        c.drawString(lx, y - 14, "Comparative figures have been restated for the reclassification "
                                  "of pass-through fuel charges.")
+
+
+def _page_plan(layout):
+    """Which statements go on which page."""
+    if layout == "twopanel":
+        return [("income", "cashflow"), ("balance", None)]
+    return [("income",), ("balance",), ("cashflow",)]
+
+
+def _draw_page(c, spec, doc_year, kinds, cols, units, page_no, n_pages):
+    layout = spec.get("layout", "standard")
+    notes = layout in ("notes", "twopanel")
+    W, H = (landscape(A4) if layout == "twopanel" else A4)
+    for i, kind in enumerate(kinds):
+        if kind is None:
+            g = _geometry(layout, 1)            # right panel of the balance sheet page: prose notes
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(g["lx"], H - 76, NOTES_TEXT[0])
+            c.setFont("Helvetica", 8.5)
+            for j, t in enumerate(NOTES_TEXT[1:]):
+                c.drawString(g["lx"], H - 100 - 16 * j, t)
+            continue
+        _draw_panel(c, spec, doc_year, kind, cols, units, H - 50 if layout == "twopanel" else H - 60,
+                    _geometry(layout, i), notes, first=(i == 0))
     c.setFont("Helvetica", 8)
-    c.drawString(60, 40, f"Synthetic sample document for demonstration only. Page {page_no} of 3")
+    c.drawString(40 if layout == "twopanel" else 60, 22 if layout == "twopanel" else 40,
+                 f"Synthetic sample document for demonstration only. Page {page_no} of {n_pages}")
     c.showPage()
 
 
-def _degrade(img: Image.Image, seed: int) -> Image.Image:
+def _degrade(img: Image.Image, seed: int, heavy: bool = False) -> Image.Image:
     rng = np.random.default_rng(seed)
-    img = img.rotate(0.6, resample=Image.BICUBIC, fillcolor=255)
+    img = img.rotate(1.3 if heavy else 0.6, resample=Image.BICUBIC, fillcolor=255)
     a = np.asarray(img, dtype=np.float32)
-    a = a * 0.92 + 12 + rng.normal(0, 7, a.shape)
+    a = a * (0.85 if heavy else 0.92) + 12 + rng.normal(0, 12 if heavy else 7, a.shape)
     img = Image.fromarray(np.clip(a, 0, 255).astype("uint8"))
-    return img.filter(ImageFilter.GaussianBlur(0.7))
+    return img.filter(ImageFilter.GaussianBlur(0.95 if heavy else 0.7))
 
 
 def write_statement_pdf(spec, doc_year: int, path: Path) -> None:
     units = doc_year in spec["units_docs"]
     cols = printed_values(spec, doc_year)
+    layout = spec.get("layout", "standard")
+    plan = _page_plan(layout)
+    size = landscape(A4) if layout == "twopanel" else A4
     buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4, invariant=1)
+    c = canvas.Canvas(buf, pagesize=size, invariant=1)
     c.setTitle(f"{spec['name']} FY{doc_year} financial statements (synthetic)")
-    for n, kind in enumerate(PAGES, 1):
-        _draw_page(c, spec, doc_year, kind, cols, units, n)
+    for n, kinds in enumerate(plan, 1):
+        _draw_page(c, spec, doc_year, kinds, cols, units, n, len(plan))
     c.save()
     src = pymupdf.open(stream=buf.getvalue(), filetype="pdf")
     out = pymupdf.open()
-    for i, kind in enumerate(PAGES):
-        if (doc_year, kind) in spec["scan"]:
-            pix = src[i].get_pixmap(dpi=150, colorspace=pymupdf.csGRAY)
+    heavy = bool(spec.get("scan_all"))
+    for i, kinds in enumerate(plan):
+        scanned = heavy or any((doc_year, k) in spec["scan"] for k in kinds if k)
+        if scanned:
+            pix = src[i].get_pixmap(dpi=140 if heavy else 150, colorspace=pymupdf.csGRAY)
             img = Image.frombytes("L", (pix.w, pix.h), pix.samples)
-            img = _degrade(img, seed=doc_year * 10 + i)
+            img = _degrade(img, seed=doc_year * 10 + i, heavy=heavy)
             jpg = io.BytesIO()
-            img.save(jpg, format="JPEG", quality=70)
-            page = out.new_page(width=A4[0], height=A4[1])
+            img.save(jpg, format="JPEG", quality=60 if heavy else 70)
+            page = out.new_page(width=size[0], height=size[1])
             page.insert_image(page.rect, stream=jpg.getvalue())
         else:
             out.insert_pdf(src, from_page=i, to_page=i)
@@ -315,6 +415,24 @@ def write_application_pdf(spec, path: Path) -> None:
     c.save()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(buf.getvalue())
+
+
+def generate_hard(root: Path) -> list[Path]:
+    """Write the harder variants under root/<borrower>/ (same file names as the main samples)."""
+    written = []
+    for slug, spec in HARD_BORROWERS.items():
+        for y in DOC_YEARS:
+            p = root / slug / f"FY{y}_financial_statements.pdf"
+            write_statement_pdf(spec, y, p)
+            written.append(p)
+        p = root / slug / "loan_application.pdf"
+        write_application_pdf(spec, p)
+        written.append(p)
+    return written
+
+
+def all_specs() -> dict:
+    return {**BORROWERS, **HARD_BORROWERS}
 
 
 def generate(root: Path) -> list[Path]:

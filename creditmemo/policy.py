@@ -17,6 +17,8 @@ def load_policy(path: Path) -> dict:
     for r in pol["rules"]:
         if r["op"] not in OPS or r["severity"] not in ("exception", "watch"):
             raise ValueError(f"bad policy rule {r.get('id')}")
+    from .ratios import dscr_settings
+    dscr_settings(pol.get("dscr"))        # fail early on an unknown definition
     return pol
 
 

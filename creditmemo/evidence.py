@@ -6,7 +6,7 @@ from pathlib import Path
 import pymupdf
 from PIL import Image, ImageDraw
 
-DPI = 130
+DPI = 170
 
 
 def render_crops(refs: list, data_root: Path, out_dir: Path) -> int:
@@ -22,7 +22,9 @@ def render_crops(refs: list, data_root: Path, out_dir: Path) -> int:
         page = docs[e["doc"]][e["page"] - 1]
         W, H = page.rect.width, page.rect.height
         lx0, ly0, lx1, ly1 = e["line_bbox"]
-        clip = pymupdf.Rect(0, max(0, ly0 * H - 38), W, min(H, ly1 * H + 38))
+        bx = e["bbox"]
+        # keep the value and some of the row's label in view, not the whole page width
+        clip = pymupdf.Rect(max(0, lx0 * W - 24, bx[0] * W - 170), max(0, ly0 * H - 34), min(W, lx1 * W + 24), min(H, ly1 * H + 34))
         pix = page.get_pixmap(dpi=DPI, clip=clip, colorspace=pymupdf.csRGB)
         img = Image.frombytes("RGB", (pix.w, pix.h), pix.samples)
         s = DPI / 72

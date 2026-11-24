@@ -1,0 +1,34 @@
+
+== Ashgrove Bakery Co Ltd
+   FY2021: scale x1, 72 values extracted
+   FY2022: scale x1,000, 72 values extracted
+   FY2023: scale x1,000, 68 values extracted, OCR on page(s) [3]
+   reconciliation: 129 checks, 7 failed, 1 info, 10 skipped
+     FAIL FY2022.2022.bs_balances: expected 4,381,000, reported 4,421,000
+     FAIL FY2022.2022.equity_roll: expected 2,340,000, reported 2,300,000
+     FAIL FY2023.2023.cf_cfo: expected 360,000, reported 351,000
+     FAIL FY2023.2023.cf_net: expected -99,000, reported -66,000
+     FAIL FY2023.2023.cf_roll: expected 423,000, reported 390,000
+     FAIL FY2023.2023.ni_tie: 33,000 vs 42,000
+     FAIL yoy.FY2022-FY2023.2022: 34 line items compared, 2 differ
+   latest year / pro forma: revenue=£5,700k, ebitda=£494k, ebitda_margin=8.7%, leverage=2.83x, current_ratio=2.00x, interest_cover=1.34x, dscr=1.12x, new_debt_service=£179k, dscr_pro_forma=0.79x, leverage_pro_forma=4.05x, collateral_cover=0.75x
+   policy: dscr_pro_forma: exception, leverage_pro_forma: exception, interest_cover: watch, revenue_growth: watch, collateral_cover: exception, reconciliation_failures: exception
+
+== Kestrel Bay Logistics Ltd
+   FY2021: scale x1,000, 72 values extracted
+   FY2022: scale x1,000, 72 values extracted
+   FY2023: scale x1,000, 72 values extracted, OCR on page(s) [2]
+   reconciliation: 128 checks, 1 failed, 0 info, 6 skipped
+     FAIL yoy.FY2022-FY2023.2022: 36 line items compared, 2 differ
+   latest year / pro forma: revenue=£19,100k, ebitda=£2,092k, ebitda_margin=11.0%, leverage=4.02x, current_ratio=1.29x, interest_cover=1.38x, dscr=1.18x, new_debt_service=£475k, dscr_pro_forma=0.92x, leverage_pro_forma=5.21x, collateral_cover=1.16x
+   policy: dscr_pro_forma: exception, leverage_pro_forma: exception, interest_cover: watch, collateral_cover: exception, reconciliation_failures: exception
+
+== Northbrook Precision Tooling Ltd
+   FY2021: scale x1,000, 72 values extracted
+   FY2022: scale x1,000, 72 values extracted
+   FY2023: scale x1,000, 72 values extracted
+   reconciliation: 128 checks, 0 failed, 0 info, 6 skipped
+   latest year / pro forma: revenue=£12,100k, ebitda=£2,177k, ebitda_margin=18.0%, leverage=1.19x, current_ratio=2.93x, interest_cover=8.74x, dscr=3.11x, new_debt_service=£430k, dscr_pro_forma=1.79x, leverage_pro_forma=2.02x, collateral_cover=1.44x
+   policy: no exceptions
+
+Memos written to out/<borrower>/memo.md and memo.html. Review: python -m creditmemo review

@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from . import audit, pipeline, server
+from . import audit, evaluation, pipeline, qa, server
 
 
 def main(argv=None):
@@ -20,6 +20,14 @@ def main(argv=None):
     v.add_argument("--port", type=int, default=8765)
     a = sub.add_parser("verify-audit", help="check the audit log hash chain")
     a.add_argument("--out", default="out")
+    q = sub.add_parser("ask", help="ask the analyst a question about one borrower (answers cite sources)")
+    q.add_argument("borrower")
+    q.add_argument("question")
+    q.add_argument("--out", default="out")
+    e = sub.add_parser("eval", help="score extraction against the generator's ground truth")
+    e.add_argument("--data", default="sample_data")
+    e.add_argument("--hard", default="sample_hard")
+    e.add_argument("--out", default="out")
     args = ap.parse_args(argv)
 
     if args.cmd == "run":
@@ -38,9 +46,37 @@ def main(argv=None):
             for n in s["narrative_notes"]:
                 print("   note:", n)
         print(f"\nMemos written to {args.out}/<borrower>/memo.md and memo.html. Review: python -m creditmemo review")
+    elif args.cmd == "ask":
+        ws = qa.Workspace.load(Path(args.out) / args.borrower)
+        res = qa.answer(ws, args.question, qa.http_chat_from_env())
+        print(res["plain"])
+        print("\nSources:")
+        for line in res["sources"]:
+            print("  -", line)
+        print(f"\n[planner: {res['planner']}; tools: {', '.join(t['tool'] for t in res['trace']) or 'none'}; "
+              f"{res['ref_count']} cited figures]")
+        for n in res["notes"]:
+            print("note:", n)
+    elif args.cmd == "eval":
+        summary = evaluation.run_eval({"standard": Path(args.data), "hard": Path(args.hard)})
+        evaluation.write_reports(summary, Path(args.out))
+        o = summary["overall"]
+        print(f"fields {o['fields']}  correct {o['correct']}  precision {o['precision']:.4f}  recall {o['recall']:.4f}  "
+              f"F1 {o['f1']:.4f}")
+        for name, v in summary["by_set"].items():
+            print(f"  {name}: precision {v['precision']:.4f} recall {v['recall']:.4f} ({v['correct']}/{v['fields']})")
+        for name, v in summary["by_method"].items():
+            print(f"  read by {name}: precision {v['precision']:.4f} recall {v['recall']:.4f} ({v['correct']}/{v['fields']})")
+        for k, v in summary["categories"].items():
+            print(f"  failure category: {k}: {v}")
+        print(f"  wrong values flagged by a reconciliation check: {summary['wrong_flagged']} of {summary['wrong_total']}")
+        print(f"Report written to {args.out}/eval.html and eval.json")
     elif args.cmd == "review":
         server.serve(Path(args.out), args.port)
     else:
-        ok, msg = audit.verify(Path(args.out) / "audit.jsonl")
-        print(("audit log intact: " if ok else "AUDIT LOG PROBLEM: ") + msg)
-        raise SystemExit(0 if ok else 1)
+        bad = False
+        for name in ("audit.jsonl", "qa_log.jsonl"):
+            ok, msg = audit.verify(Path(args.out) / name)
+            print(f"{name}: " + ("intact" if ok else "PROBLEM: " + msg))
+            bad = bad or not ok
+        raise SystemExit(1 if bad else 0)

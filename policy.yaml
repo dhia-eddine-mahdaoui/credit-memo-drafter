@@ -2,6 +2,16 @@
 # Each rule is evaluated on the latest fiscal year. severity: "exception" needs a documented
 # sign-off; "watch" is flagged for the credit officer. Edit and re-run to see the memo change.
 name: Illustrative SME term-loan policy
+
+# How this lender defines "cash available for debt service" (the DSCR numerator). The denominator is always
+# existing interest + principal repaid, plus the new loan's annuity payment for the pro forma figure.
+#   ebitda_less_tax             EBITDA - income tax                                   (default)
+#   ebitda_less_tax_less_capex  EBITDA - income tax - capex_share x capital expenditure
+#   cfo_plus_interest           operating cash flow (after tax, after working capital) + interest paid
+dscr:
+  cfads: ebitda_less_tax
+  capex_share: 1.0        # only used by ebitda_less_tax_less_capex: 1.0 = all capex, 0.5 = assumed maintenance half
+
 rules:
   - id: dscr_pro_forma
     title: Pro forma debt service cover
